@@ -1,66 +1,57 @@
+import torch
 import socket
 import pickle
-import random
 import time
+import random
+from common.model import get_model
+from common.utils import serialize_weights, deserialize_weights
+from monitoring.logger import logger
 
-from common.model import SimpleModel
-from common.config import HOST, PORT
-from client.local_training import train_local
+class FederatedClient:
+    def __init__(self, client_id, server_host='server', server_port=5000):
+        self.client_id = client_id
+        self.server_host = server_host
+        self.server_port = server_port
+        self.model = get_model()
+        self.data_size = random.randint(800, 1200)
 
+    def train_local(self, epochs=3):
+        # Simulation d'entraînement (à remplacer par vrai dataloader si besoin)
+        for _ in range(epochs):
+            time.sleep(0.5)  # simulation
+        logger.info(f"Client {self.client_id} finished local training")
+        return serialize_weights(self.model)
 
-client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    def start(self):
+        while True:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.connect((self.server_host, self.server_port))
+                    s.sendall(pickle.dumps({"type": "register", "client_id": self.client_id, "data_size": self.data_size}))
 
-client_socket.connect((HOST, PORT))
+                    while True:
+                        data = s.recv(4096 * 8)
+                        if not data:
+                            break
+                        msg = pickle.loads(data)
 
-print("Connected to server")
+                        if msg.get("type") == "model":
+                            deserialize_weights(self.model, msg["weights"])
+                            updated_weights = self.train_local()
+                            
+                            response = {
+                                "type": "update",
+                                "client_id": self.client_id,
+                                "weights": updated_weights,
+                                "data_size": self.data_size,
+                                "round": msg["round"]
+                            }
+                            s.sendall(pickle.dumps(response))
+            except Exception as e:
+                logger.error(f"Connection lost: {e}")
+                time.sleep(3)
 
-
-while True:
-
-    try:
-
-        data = client_socket.recv(100000)
-
-        if not data:
-            break
-
-        payload = pickle.loads(data)
-
-        round_number = payload["round"]
-
-        model_weights = payload["weights"]
-
-        print(f"Round received : {round_number}")
-
-        model = SimpleModel()
-
-        model.load_state_dict(model_weights)
-
-        updated_weights = train_local(model)
-
-        if random.random() < 0.2:
-
-            print("Packet lost")
-
-            continue
-
-        response = {
-
-            "round": round_number,
-            "weights": updated_weights
-        }
-
-        client_socket.send(pickle.dumps(response))
-
-        print("Weights sent")
-
-        time.sleep(2)
-
-    except Exception as e:
-
-        print("Error :", e)
-
-        break
-
-
-client_socket.close()
+if __name__ == "__main__":
+    import os
+    client = FederatedClient(os.getenv("CLIENT_ID", "client1"))
+    client.start()
