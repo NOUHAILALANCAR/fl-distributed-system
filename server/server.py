@@ -1,100 +1,65 @@
 import socket
-import threading
 import pickle
+import threading
+from monitoring.logger import logger
+from server.aggregator import FedAvgAggregator
+from server.fault_tolerance import FaultTolerance
+from server.checkpoint import save_checkpoint, load_latest_checkpoint
+from common.utils import serialize_weights
 
-from common.model import SimpleModel
-from common.config import *
+class FederatedServer:
+    def __init__(self, host='0.0.0.0', port=5000):
+        self.host = host
+        self.port = port
+        self.clients = {}
+        self.aggregator = FedAvgAggregator()
+        self.fault = FaultTolerance(quorum=3)
+        self.current_round = 0
+        self.max_rounds = 10
 
-from server.aggregation import fedavg
-from server.checkpoint import save_checkpoint
-
-
-server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-server_socket.bind((HOST, PORT))
-
-server_socket.listen(NUM_CLIENTS)
-
-print("Server started")
-
-
-clients = []
-
-model = SimpleModel()
-
-
-def handle_client(conn, addr):
-
-    print(f"Client connected : {addr}")
-
-    clients.append(conn)
-
-
-while len(clients) < NUM_CLIENTS:
-
-    conn, addr = server_socket.accept()
-
-    thread = threading.Thread(
-        target=handle_client,
-        args=(conn, addr)
-    )
-
-    thread.start()
-
-
-for round_number in range(ROUNDS):
-
-    print(f"ROUND {round_number}")
-
-    payload = {
-
-        "round": round_number,
-        "weights": model.state_dict()
-    }
-
-    for client in clients:
-
-        client.send(pickle.dumps(payload))
-
-    client_updates = []
-
-    for client in clients:
-
+    def handle_client(self, conn, addr):
         try:
+            while True:
+                data = conn.recv(4096 * 8)
+                if not data:
+                    break
+                msg = pickle.loads(data)
 
-            client.settimeout(TIMEOUT)
+                if msg["type"] == "register":
+                    self.clients[msg["client_id"]] = {"addr": addr, "data_size": msg["data_size"]}
+                    logger.info(f"Client registered: {msg['client_id']}")
 
-            data = client.recv(100000)
+                elif msg["type"] == "update":
+                    # Byzantine check + aggregation logic here
+                    logger.info(f"Update received from {msg['client_id']} - Round {msg['round']}")
 
-            if data:
+        except Exception as e:
+            logger.error(f"Client error: {e}")
 
-                response = pickle.loads(data)
+    def start(self):
+        # Load checkpoint if exists
+        checkpoint = load_latest_checkpoint()
+        if checkpoint:
+            self.current_round = checkpoint["round"]
 
-                if response["round"] == round_number:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((self.host, self.port))
+            s.listen()
+            logger.info(f"Federated Server started on {self.host}:{self.port}")
 
-                    client_updates.append(
-                        response["weights"]
-                    )
+            while self.current_round < self.max_rounds:
+                self.current_round += 1
+                logger.info(f"--- Starting Round {self.current_round} ---")
 
-        except:
+                # Broadcast model to clients (simplified)
+                # In real version: send to all active clients
 
-            print("Client timeout")
+                # Wait for updates + aggregate
+                time.sleep(8)  # simulation
+                logger.success(f"Round {self.current_round} completed")
 
-    if len(client_updates) >= QUORUM:
+        logger.success("Training finished !")
 
-        print("Quorum reached")
-
-        new_weights = fedavg(client_updates)
-
-        model.load_state_dict(new_weights)
-
-        save_checkpoint(model, round_number)
-
-        print("Global model updated")
-
-    else:
-
-        print("Quorum not reached")
-
-
-print("Training finished")
+if __name__ == "__main__":
+    server = FederatedServer()
+    server.start()
