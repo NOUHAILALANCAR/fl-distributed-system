@@ -1,1 +1,57 @@
+version: '3.8'
 
+services:
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: fl-server
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./checkpoints:/app/checkpoints
+    networks:
+      - fl-network
+
+  client1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client
+    container_name: fl-client1
+    environment:
+      - CLIENT_ID=client1
+      - SERVER_HOST=server
+    networks:
+      - fl-network
+    depends_on:
+      - server
+
+  client2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client
+    container_name: fl-client2
+    environment:
+      - CLIENT_ID=client2
+      - SERVER_HOST=server
+    networks:
+      - fl-network
+    depends_on:
+      - server
+
+  client3:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client
+    container_name: fl-client3
+    environment:
+      - CLIENT_ID=client3
+      - SERVER_HOST=server
+    networks:
+      - fl-network
+    depends_on:
+      - server
+
+networks:
+  fl-network:
+    driver: bridge
